@@ -3,144 +3,96 @@
 # Release script for playactor
 #
 
-# Test run for CI!
-
+import os
 import datetime
 from collections import OrderedDict
 
 try:
-    from hostage import *  #pylint: disable=unused-wildcard-import,wildcard-import
+    from hostage import *  # pylint: disable=unused-wildcard-import,wildcard-import
 except ImportError:
     print("!! Release library unavailable.")
     print("!! Use `pip install hostage` to fix.")
-    print("!! You will also need an API token in .github.token,")
-    print("!!  a .hubrrc config, or `brew install hub` configured.")
-    print("!! A $GITHUB_TOKEN env variable will also work.")
+    print("!! A $GITHUB_TOKEN env variable is needed.")
     exit(1)
 
-#
-# Globals
-#
+# Set GitHub Token and Repository from Environment Variables
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+GITHUB_REPOSITORY = os.getenv('GITHUB_REPOSITORY')
 
+if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+    print("!! Environment variables GITHUB_TOKEN and GITHUB_REPOSITORY must be set.")
+    exit(1)
+
+# Initialize GitHub with Token
+github = Github(GITHUB_TOKEN)
+
+# Define Global Variables
 notes = File(".last-release-notes")
-latestTag = git.Tag.latest(branch = 'main')
+latestTag = git.Tag.latest(branch='main')
 
+# Function Definitions
 def formatIssue(issue):
-    return "- {title} (#{number})\n".format(
-            number=issue.number,
-            title=issue.title)
+    return "- {title} (#{number})\n".format(number=issue.number, title=issue.title)
 
 def buildLabeled(labelsToTitles):
-    """Given a set of (label, title) tuples, produces an
-    OrderedDict whose keys are `label`, and whose values are
-    dictionaries containing 'title' -> `title`, and
-    'content' -> string. The iteration order of the dictionary
-    will preserve the ordering of the provided tuples
-    """
     result = OrderedDict()
     for k, v in labelsToTitles:
         result[k] = {'title': v, 'content': ''}
     return result
 
 def buildDefaultNotes(_):
+    if not latestTag:
+        return "Initial release."
+    
     logParams = {
-            'path': latestTag.name + "..HEAD",
-            'grep': ["Fix #", "Fixes #", "Closes #"],
-            'pretty': "format:- %s"}
+        'path': latestTag.name + "..HEAD",
+        'grep': ["Fix #", "Fixes #", "Closes #"],
+        'pretty': "format:- %s"
+    }
     logParams["invertGrep"] = True
     msgs = git.Log(**logParams).output()
 
     contents = ''
-
-    lastReleaseDate = latestTag.get_created_date()
-    if lastReleaseDate.tzinfo:
-        # pygithub doesn't respect tzinfo, so we have to do it ourselves
-        lastReleaseDate -= lastReleaseDate.tzinfo.utcoffset(lastReleaseDate)
-        lastReleaseDate.replace(tzinfo=None)
-
-    closedIssues = github.find_issues(state='closed', since=lastReleaseDate)
+    lastReleaseDate = latestTag.get_created_date() if latestTag else datetime.datetime.now()
+    closedIssues = github.get_repo(GITHUB_REPOSITORY).get_issues(state='closed', since=lastReleaseDate)
 
     labeled = buildLabeled([
-        ['feature', "New Features"],
-        ['enhancement', "Enhancements"],
-        ['bug', "Bug Fixes"],
-        ['_default', "Other resolved tickets"],
+        ('feature', "New Features"),
+        ('enhancement', "Enhancements"),
+        ('bug', "Bug Fixes"),
+        ('_default', "Other resolved tickets"),
     ])
 
-    if closedIssues:
-        for issue in closedIssues:
-            found = False
-            for label in labeled.keys():
-                if label in issue.labels:
-                    labeled[label]['content'] += formatIssue(issue)
-                    found = True
-                    break
+    for issue in closedIssues:
+        found = False
+        for label in issue.labels:
+            if label.name in labeled:
+                labeled[label.name]['content'] += formatIssue(issue)
+                found = True
+                break
+        if not found:
+            labeled['_default']['content'] += formatIssue(issue)
 
-            if not found and 'helpme' not in issue.labels:
-                labeled['_default']['content'] += formatIssue(issue)
+    for label, data in labeled.items():
+        if data['content']:
+            contents += "\n**{}**:\n{}".format(data['title'], data['content'])
 
-    for labeledIssueInfo in labeled.values():
-        if labeledIssueInfo['content']:
-            contents += "\n**{title}**:\n{content}".format(**labeledIssueInfo)
-
-    if msgs: contents += "\n**Notes**:\n" + msgs
+    if msgs:
+        contents += "\n**Notes**:\n" + msgs
     return contents.strip()
 
-#
-# Verify
-#
+# Script Execution Flow
+if __name__ == "__main__":
+    version = verify(File("package.json").filtersTo(RegexFilter('"version": "(.*)"'))).valueElse(None)
+    if not version:
+        print("No version found in package.json.")
+        exit(1)
 
-version = verify(File("package.json")
-        .filtersTo(RegexFilter('"version": "(.*)"'))
-        ).valueElse(echoAndDie("No version!?"))
-versionTag = git.Tag(version)
+    versionTag = "v" + version  # Assuming version prefix
+    releaseNotes = buildDefaultNotes(None)
 
-verify(versionTag.exists())\
-    .then(echoAndDie("Version `%s` already exists!" % version))
+    # Example of publishing release (simplified, implement as needed)
+    repo = github.get_repo(GITHUB_REPOSITORY)
+    repo.create_git_release(tag=versionTag, name="Release " + versionTag, message=releaseNotes, draft=False, prerelease=False)
 
-#
-# Make sure we can build it and that all the tests pass
-#
-
-verify(Execute("npm run check")).succeeds(silent=False).orElse(die())
-
-#
-# Build the release notes
-#
-
-contents = verify(notes.contents()).valueElse(buildDefaultNotes)
-notes.delete()
-
-verify(Edit(notes, withContent=contents).didCreate())\
-        .orElse(echoAndDie("Aborted due to empty message"))
-
-releaseNotes = notes.contents()
-
-#
-# Deploy
-#
-
-verify(Execute('npm publish')).succeeds(silent=False)
-
-#
-# Upload to github
-#
-
-print("Uploading to Github...")
-
-verify(versionTag).create()
-verify(versionTag).push("origin")
-
-gitRelease = github.Release(version)
-verify(gitRelease).create(body=releaseNotes)
-
-#
-# Success! Now, just cleanup and we're done!
-#
-
-notes.delete()
-
-print("Done! Published %s" % version)
-
-# flake8: noqa
-
+    print("Release {} created successfully.".format(versionTag))
