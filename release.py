@@ -3,6 +3,8 @@
 # Release script for playactor
 #
 
+# Test run for CI!
+
 import datetime
 from collections import OrderedDict
 
