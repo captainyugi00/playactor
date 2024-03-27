@@ -9,7 +9,7 @@ jobs:
     strategy:
       matrix:
         node_version: [12]
-        python_version: ['3.6']  # Specify the Python version
+        python_version: ['3.6.15']  # Specify the Python version
 
     steps:
     - uses: actions/checkout@v2
