@@ -58,4 +58,4 @@ jobs:
         ./release.py
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Make sure to set this secret in your repository settings
-        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REPOSITORY: 'captainyugi00/playactor'
