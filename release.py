@@ -6,6 +6,7 @@
 import os
 import datetime
 from collections import OrderedDict
+from github import Github
 
 try:
     from hostage import *  # pylint: disable=unused-wildcard-import,wildcard-import
