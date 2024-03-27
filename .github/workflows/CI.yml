@@ -4,7 +4,6 @@ on: [push, pull_request]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -37,10 +36,14 @@ jobs:
       run: |
         npm run lint && \
         npm run build && \
-
         # `npm run` refuses to pass the command line flags to mocha...
         yarn test --reporter mocha-github-actions-reporter
-
       env:
         CI: true
 
+    # Add this step to upload the dist folder
+    - name: Upload dist as Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: dist
+        path: dist/
